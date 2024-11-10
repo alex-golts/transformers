@@ -1989,6 +1989,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         return_dict: Optional[bool] = None,
         encoder_position_ids_dict: Optional[Dict[str, Tuple[torch.LongTensor,str]]] = None,  # shape of each LongTensor (num_batches, n_input_tokens)
         decoder_position_ids_dict: Optional[Dict[str, Tuple[torch.LongTensor,str]]] = None, # shape of each LongTensor (num_batches, n_input_tokens)
+        sample_weights: Optional[torch.FloatTensor] = None,
     ) -> Union[Tuple[torch.FloatTensor], Seq2SeqLMOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
@@ -2121,12 +2122,15 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         
         loss = None
         if labels is not None:
-            loss_fct = CrossEntropyLoss(ignore_index=-100)
+            reduction = 'mean' if sample_weights is None else 'none'
+            loss_fct = CrossEntropyLoss(ignore_index=-100, reduction=reduction)
             # move labels to correct device to enable PP
             labels = labels.to(lm_logits.device)
             loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
-
+            if sample_weights is not None:
+                sample_weights_expanded = sample_weights.unsqueeze(1).expand(-1, labels.shape[-1]).reshape(-1)
+                loss = (loss*sample_weights_expanded).mean()
         if not return_dict:
             output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
             return ((loss,) + output) if loss is not None else output
